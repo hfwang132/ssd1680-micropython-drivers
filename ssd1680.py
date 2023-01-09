@@ -1,7 +1,8 @@
+import time
 from machine import Pin
 from machine import SPI
-import time
-from math import ceil, floor
+from math import ceil, sqrt
+from fonts import asc2_0806
 
 busy = Pin(7, Pin.IN)
 res = Pin(8, Pin.OUT)
@@ -60,8 +61,8 @@ class Paint():
             for x in range(self.screen.width_bytes):
                 addr = x + y * self.screen.width_bytes
                 self.img[addr] = self.bg_color
-                
-    def draw_point(self, x_pos, y_pos, start_from_one=True):
+    
+    def _convert_coor(self, x_pos, y_pos, start_from_one=True):
         if self.rotate == Rotate.ROTATE_0:
             x = x_pos
             y = y_pos
@@ -74,19 +75,110 @@ class Paint():
         else:
             x = y_pos
             y = self.screen.height - x_pos - 1
-        
+            
         if start_from_one:
             x = x - 1
             y = y - 1
+            
+        return x, y
+    
+    def draw_point(self, x_pos, y_pos, start_from_one=True):
+        x, y = self._convert_coor(x_pos, y_pos)
+        if x > self.screen.width or y > self.screen.height or x < 0 or y < 0:
+            return
         
-        addr = floor(x / 8) + y * self.screen.width_bytes
+        addr = x // 8 + y * self.screen.width_bytes
         raw = self.img[addr]
         
         if (self.bg_color == Color.WHITE):
             self.img[addr] = raw & ~(0x80 >> (x % 8))
         else:
             self.img[addr] = raw | (0x80 >> (x % 8))
+            
+    def draw_line(self, x_start, y_start, x_end, y_end):
+        dx = x_end - x_start
+        dy = y_end - y_start
+        points = []
+        if abs(dx) > abs(dy):
+            x_inc = (dx > 0) - (dx < 0)
+            x_offset = 0
+            for _ in range(abs(dx) + 1):
+                x_tmp = x_start + x_offset
+                y_tmp = y_start + round(dy / dx * x_offset)
+                points.append((x_tmp, y_tmp))
+                x_offset = x_offset + x_inc
+        else:
+            y_inc = (dy > 0) - (dy < 0)
+            y_offset = 0
+            for _ in range(abs(dy) + 1):
+                y_tmp = y_start + y_offset
+                x_tmp = x_start + round(dx / dy * y_offset)
+                points.append((x_tmp, y_tmp))
+                y_offset = y_offset + y_inc
+                
+        for point in points:
+            self.draw_point(point[0], point[1])
+            
+    def draw_rectangle(self, x_start, y_start, x_end, y_end):
+        self.draw_line(x_start, y_start, x_start, y_end)
+        self.draw_line(x_start, y_start, x_end, y_start)
+        self.draw_line(x_start, y_end, x_end, y_end)
+        self.draw_line(x_end, y_start, x_end, y_end)
+
+    def draw_circle(self, x_center, y_center, radius):
+        points = []
+        for x in range(x_center - radius, x_center + radius):
+            y = y_center + round(sqrt(radius ** 2 - (x - x_center) ** 2))
+            points.append((x, y))
+            y = y_center - round(sqrt(radius ** 2 - (x - x_center) ** 2))
+            points.append((x, y))
+        for y in range(y_center - radius, y_center + radius):
+            x = x_center + round(sqrt(radius ** 2 - (y - y_center) ** 2))
+            points.append((x, y))
+            x = x_center - round(sqrt(radius ** 2 - (y - y_center) ** 2))
+            points.append((x, y))
         
+        for point in points:
+            self.draw_point(point[0], point[1])
+            
+    def show_char(self, char, x_start, y_start, font=asc2_0806, font_size=(6, 8), multiplier=1):
+        tmp = 0x00
+        char_idx = ord(char) - 32
+        if multiplier == 1:
+            for x_offset in range(font_size[0]):
+                tmp = font[char_idx][x_offset]
+                for y_offset in range(font_size[1]):
+                    if tmp & 0x01:
+                        self.draw_point(x_start + x_offset, y_start + y_offset)
+                    tmp = tmp >> 1
+        else:
+            for x_offset in range(font_size[0] * multiplier):
+                tmp = font[char_idx][x_offset // multiplier]
+                for y_offset in range(font_size[1] * multiplier):
+                    if tmp & 0x01:
+                        self.draw_point(x_start + x_offset, y_start + y_offset)
+                    if y_offset % multiplier == multiplier - 1:
+                        tmp = tmp >> 1
+                
+    def show_string(self, string, x_start, y_start, font=asc2_0806, font_size=(6, 8), multiplier=1):
+        for idx, char in enumerate(string):
+            self.show_char(char, x_start + idx * font_size[0] * multiplier, y_start, font, font_size, multiplier)
+            
+    def show_bitmap(self, bitmap, x_start, y_start, multiplier=1):
+        if multiplier == 1:
+            for r, row in enumerate(bitmap):
+                for c, col in enumerate(row):
+                    if col == 1:
+                        self.draw_point(x_start + c, y_start + r)
+        else:
+            for r in range(len(bitmap) * multiplier):
+                for c in range(len(bitmap[0] * multiplier)):
+                    if bitmap[r//multiplier][c//multiplier] == 1:
+                        self.draw_point(x_start + c, y_start + r)
+    
+    def show_img(self, img_path, x_start, y_start):
+        raise NotImplementedError
+
 
 class SSD1680():
     def __init__(self, spi, dc, busy, cs, res):
@@ -202,14 +294,35 @@ class SSD1680():
         self.update_mem()
         self.update_screen()
         
-    def clear(self, color):
-        self.paint.clear(color)
+    def clear(self, *args, **kwargs):
+        self.paint.clear(*args, **kwargs)
         
-    def draw_point(self, x_pos, y_pos):
-        self.paint.draw_point(x_pos, y_pos)
+    def draw_point(self, *args, **kwargs):
+        self.paint.draw_point(*args, **kwargs)
         
+    def draw_line(self, *args, **kwargs):
+        self.paint.draw_line(*args, **kwargs)
+    
+    def draw_rectangle(self, *args, **kwargs):
+        self.paint.draw_rectangle(*args, **kwargs)
         
-if __name__ == "__main__":
+    def draw_circle(self, *args, **kwargs):
+        self.paint.draw_circle(*args, **kwargs)
+        
+    def show_char(self, *args, **kwargs):
+        self.paint.show_char(*args, **kwargs)
+        
+    def show_string(self, *args, **kwargs):
+        self.paint.show_string(*args, **kwargs)
+    
+    def show_bitmap(self, *args, **kwargs):
+        self.paint.show_bitmap(*args, **kwargs)
+        
+    def show_img(self, *args, **kwargs):
+        self.paint.show_img(*args, **kwargs)
+    
+
+if __name__ == "__main__": # test
     spi_ssd1680 = SPI(
             0,
             baudrate=400000,
@@ -230,5 +343,41 @@ if __name__ == "__main__":
 
     ssd1680.init()
     ssd1680.clear(Color.WHITE)
-    ssd1680.draw_point(295, 127)
+    ssd1680.draw_line(40, 20, 110, 20)
+    ssd1680.draw_line(250, 100, 110, 20)
+    ssd1680.draw_rectangle(18, 18, 28, 28)
+    ssd1680.draw_rectangle(18, 38, 94, 48)
+    ssd1680.draw_circle(60, 20, 10)
+    ssd1680.draw_circle(90, 20, 10)
+    ssd1680.show_char('h', 20, 20)
+    ssd1680.show_string("hello world!", 20, 40)
+    ssd1680.show_string("hello world!", 20, 60, multiplier=2)
+    ssd1680.show_string("hello world!", 20, 90, multiplier=3)
+    ssd1680.show_string("Godfly 1.9.2023", 200, 45)
+    ssd1680.show_bitmap(
+            [
+                [0,0,1,0,0],
+                [0,0,1,0,0],
+                [1,1,0,1,1],
+                [0,0,1,0,0],
+                [0,0,1,0,0]
+            ],
+            240,
+            10,
+            multiplier=3
+        )
+    ssd1680.show_bitmap(
+            [
+                [0,0,1,0,0,0,1,0,0],
+                [0,1,0,1,0,1,0,1,0],
+                [1,0,0,0,1,0,0,0,1],
+                [0,1,0,0,0,0,0,1,0],
+                [0,0,1,0,0,0,1,0,0],
+                [0,0,0,1,0,1,0,0,0],
+                [0,0,0,0,1,0,0,0,0]
+            ],
+            260,
+            80,
+            multiplier=4
+        )
     ssd1680.update()
