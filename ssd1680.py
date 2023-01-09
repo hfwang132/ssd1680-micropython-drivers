@@ -4,10 +4,6 @@ from machine import SPI
 from math import ceil, sqrt
 from fonts import asc2_0806
 
-busy = Pin(7, Pin.IN)
-res = Pin(8, Pin.OUT)
-cs = Pin(9, Pin.OUT)
-dc = Pin(10, Pin.OUT)
 
 class TimeoutError(Exception):
     def __init__(self, msg):
@@ -323,6 +319,12 @@ class SSD1680():
     
 
 if __name__ == "__main__": # test
+    
+    busy = Pin(7, Pin.IN)
+    res = Pin(8, Pin.OUT)
+    cs = Pin(9, Pin.OUT)
+    dc = Pin(10, Pin.OUT)
+    
     spi_ssd1680 = SPI(
             0,
             baudrate=400000,
